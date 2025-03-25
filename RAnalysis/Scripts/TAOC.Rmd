@@ -1,0 +1,740 @@
+---
+title: "Total Antioxidant Capacity.Rmd"
+author: "Sam Gurr"
+date: "2024-07-23"
+output: html_document
+---
+
+-   Last updates: July 23, 2024
+
+# Thermal Performacne (pilot test) & INFISH projet with Indya Limpkin
+
+## Used Total Antioxidant capacity kit from Cell Biolabs using C virginica gill tissue homogenate, corrected to
+
+total protein using pierce BCA protein assay (albumin standard)
+
+## Load Libraries
+
+### SET UP
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# SET WORKING DIRECTORY 
+# knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
+knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+#knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+```
+
+
+## Load packages 
+
+```{r setup, include=TRUE}
+
+# library(lmtest) # to receive p value from betareg model
+# library(FSA) # for the Dun test post hoc for SRH non-parametric 2 way anova]
+# library(emmeans)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(car)
+# library(lmerTest)
+library(tidyr)
+# library(reshape2)
+library(ggpubr)
+# library(nlme)
+# library(rcompanion) # to run the Schrier -Ray-Hare non parametric 2 way 
+library(ggpmisc) # stat_poly for inserting equation and R2 for ggplot line 
+```
+
+## Function to load files
+
+-   At your service, from 'spec to table' ...I'm so funny
+
+```{r Spec_to_table}
+
+Spec_to_table <- function(datapath, platenumber, daterecorded) {
+  
+# import the data in raw text form exported from the spectrophotometer
+        rawtextfile <- read.delim(datapath,
+                              header = F,
+                              skip=3,
+                              fileEncoding="latin1")
+  
+
+        rawmatrix   <- as.matrix(rawtextfile[c(1:8),c(3:14)])
+        colnames(rawmatrix) = c("1","2","3","4","5","6","7","8","9","10","11","12")
+        rownames(rawmatrix) = c("A","B","C","D","E","F","G","H")
+        
+        raw_table <- as.data.frame.table(rawmatrix, responseName = "value") %>% 
+                                    dplyr::rename(well_row=Var1, well_column=Var2, Abs_412nm=value) %>% 
+                                    dplyr::mutate(well=paste0(well_row,well_column),
+                                                  Run_date =daterecorded,
+                                                  Plate=platenumber) %>% 
+                                    dplyr::select(-c(well_row,well_column))
+        # reorder the columns because I prefer it this way..
+        
+        raw_table_ordered <- raw_table[,c(3,4,2,1)]
+}
+
+
+```
+
+-   Use the spec_to_table to import raw spec txt files and compile to a table, yes that is what it does
+
+-   add a column for the time, what is the time? - timepoints 1, 2, 3, 4 etc. represent 5 minute intervals starting at time 0 Example:
+
+    -   timepoint1 = 0 minutes
+    -   timepoint 2 = 5 minutes
+    -   and so on...
+
+```{r load TAOC raw data and build master files}
+
+# plate 1 
+TAOC_Plate1_before <- Spec_to_table('Data/Total_Antioxidant_Capacity/20240709_TAOC_Plate1_beforeCu.txt', 1, 20240709) %>% dplyr::mutate(Time = 'BEFORE Cu activation', Plate = 1) %>% dplyr::rename(Abs_490nm = Abs_412nm)
+TAOC_Plate1_after  <- Spec_to_table('Data/Total_Antioxidant_Capacity/20240709_TAOC_Plate1_afterCu.txt', 1, 20240709) %>% dplyr::mutate(Time = 'AFTER Cu activation', Plate = 1) %>% dplyr::rename(Abs_490nm = Abs_412nm)
+
+# plate 2
+TAOC_Plate2_before <- Spec_to_table('Data/Total_Antioxidant_Capacity/20240709_TAOC_Plate2_beforeCu.txt', 2, 20240709) %>% dplyr::mutate(Time = 'BEFORE Cu activation', Plate = 2) %>% dplyr::rename(Abs_490nm = Abs_412nm)
+TAOC_Plate2_after  <- Spec_to_table('Data/Total_Antioxidant_Capacity/20240709_TAOC_Plate2_afterCu.txt', 2, 20240709) %>% dplyr::mutate(Time = 'AFTER Cu activation', Plate = 2) %>% dplyr::rename(Abs_490nm = Abs_412nm)
+
+# # plate 1 & 2 master files
+TAOC_Plate1_master <- do.call("rbind", list(TAOC_Plate1_before, TAOC_Plate1_after))
+
+TAOC_Plate2_master <- do.call("rbind", list(TAOC_Plate2_before, TAOC_Plate2_after))
+```
+
+```{r load Total protein correction data for citrate synthase}
+
+# plate 1 
+TP_Plate1_master <- Spec_to_table('Data/Total_Protein_Total_Antioxidant_Capacity/Total_Protein_TAOC_Plate1.txt', 1, 20240711)  %>%  dplyr::rename(Abs_562nm = Abs_412nm)
+
+# plate 2
+TP_Plate2_master <- Spec_to_table('Data/Total_Protein_Total_Antioxidant_Capacity/Total_Protein_TAOC_Plate2.txt', 2, 20240711)   %>%  dplyr::rename(Abs_562nm = Abs_412nm)
+
+```
+
+
+```{r load reference metadata and call target datasets}
+
+metadata <- read.csv('Data/TAOC_metadata.csv', sep = ",", header=T)
+
+# rename a few columns so they can merge with the data (in next chunk)
+
+# Plate 1 
+metadata.TAOC_Plate_1 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Antioxidant Capacity Assay " &
+                                        Plate.Number == 1) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+# Plate 2
+metadata.TAOC_Plate_2 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Antioxidant Capacity Assay " & 
+                                        Plate.Number == 2) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+
+
+
+# Plate 1 
+metadata.TP_Plate_1 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Protein" & 
+                                        Plate.Number == 1) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+# Plate 2
+metadata.TP_Plate_2 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Protein" & 
+                                        Plate.Number == 2) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+
+
+
+```
+
+
+* merge metadata with data 
+```{r merge metadata with data}
+
+#  TAOC
+# Plate 1 
+Plate1 <- merge(metadata.TAOC_Plate_1, TAOC_Plate1_master, by = c('Plate', 'well'))                          
+nrow(TAOC_Plate1_master) == nrow(Plate1) # must be TRUE
+nrow(Plate1) # 192 rows
+Plate1 <- subset(Plate1, !is.na(Sample.Type)) # now 574  total rows with NAs omitted (not sample, blank nor stnadard)
+nrow(Plate1) # 192 rows - no rows omitted, full plate
+
+
+# Plate 2
+Plate2 <- merge(metadata.TAOC_Plate_2, TAOC_Plate2_master, by = c('Plate', 'well'))                          
+nrow(TAOC_Plate2_master) == nrow(Plate2) # must be TRUE
+nrow(Plate2) # 192 rows
+Plate2 <- subset(Plate2, !is.na(Sample.Type)) # now 328  total rows with NAs omitted (not sample, blank nor stnadard)
+nrow(Plate2) # 168 rows, several rows of the plate were NA
+
+
+# Total protein
+# Plate 1 
+Plate1.TP <- merge(metadata.TP_Plate_1, TP_Plate1_master, by = c('Plate', 'well'))                          
+nrow(TP_Plate1_master) == nrow(Plate1.TP) # must be TRUE
+nrow(Plate1.TP) # 96 
+Plate1.TP <- subset(Plate1.TP, !is.na(Sample.Type)) # now 87 total rows with NAs omitted (not sample, blank nor stnadard)
+nrow(Plate1.TP) # 95 - one NA
+
+
+# Plate 2 
+Plate2.TP <- merge(metadata.TP_Plate_2, TP_Plate2_master, by = c('Plate', 'well'))                          
+nrow(TP_Plate2_master) == nrow(Plate2.TP) # must be TRUE
+nrow(Plate2.TP) # 96
+Plate2.TP <- subset(Plate2.TP, !is.na(Sample.Type)) # now 68 total rows with NAs omitted (not sample, blank nor stnadard)
+nrow(Plate2.TP) # 80 - several NAs not a full plate
+
+```
+
+
+* subset standards, blanks, and samples
+```{r subset data types}
+
+# TAOC
+# Plate 1 
+Plate1.samples   <- Plate1 %>% dplyr::filter(Sample.Type %in% 'Sample')
+Plate1.blanks    <- Plate1 %>% dplyr::filter(Sample.Type %in% c('Blank', 'Blank ')) # space, why... whatevs
+Plate1.standards <- Plate1 %>% dplyr::filter(Sample.Type %in% 'Standard')
+
+(nrow(Plate1.samples) + 
+    nrow(Plate1.blanks) + 
+      nrow(Plate1.standards)) == nrow(Plate1) # sanity check, must be true
+
+
+# Plate 2
+Plate2.samples   <- Plate2 %>% dplyr::filter(Sample.Type %in% 'Sample')
+Plate2.blanks    <- Plate2 %>% dplyr::filter(Sample.Type %in%  c('Blank', 'Blank ')) # space, why... whatevs
+Plate2.standards <- Plate2 %>% dplyr::filter(Sample.Type %in% 'Standard')
+
+(nrow(Plate2.samples) + 
+    nrow(Plate2.blanks) + 
+    nrow(Plate2.standards)) == nrow(Plate2) # sanity check, must be true
+
+
+
+
+
+
+# Total protein
+# Plate 1 
+Plate1_TP.samples    <- Plate1.TP %>% dplyr::filter(Sample.Type %in% 'Sample')
+# Plate1_TP.blanks     <- Plate1.TP %>% dplyr::filter(Sample.Type %in% 'Blank')
+Plate1_TP.standards  <- Plate1.TP %>% dplyr::filter(Sample.Type %in% c('Standard', 'Blank'))
+
+(nrow(Plate1_TP.samples) + 
+    # nrow(Plate1_TP.blanks) + 
+      nrow(Plate1_TP.standards)) == nrow(Plate1.TP) # sanity check, must be true
+
+
+# Plate 2
+Plate2_TP.samples    <- Plate2.TP %>% dplyr::filter(Sample.Type %in% 'Sample')
+# Plate2_TP.blanks     <- Plate2.TP %>% dplyr::filter(Sample.Type %in% 'Blank') 
+Plate2_TP.standards  <- Plate2.TP %>% dplyr::filter(Sample.Type %in% c('Standard', 'Blank'))
+
+(nrow(Plate2_TP.samples) + 
+    # nrow(Plate2_TP.blanks) + 
+      nrow(Plate2_TP.standards)) == nrow(Plate2.TP) # sanity check, must be true
+
+```
+
+## Total protein calculations 
+
+```{r total protein standard curve}
+
+# assign known BCA values to standard IDs A-I
+BCA_standards <- rbind(Plate1_TP.standards, Plate2_TP.standards) %>%  
+  dplyr::mutate(BCA_ug_mL = case_when(Standards %in% 'A' ~ 2000,
+                                      Standards %in% 'B' ~ 1500,
+                                      Standards %in% 'C' ~ 1000,
+                                      Standards %in% 'D' ~ 750,
+                                      Standards %in% 'E' ~ 500,
+                                      Standards %in% 'F' ~ 250,
+                                      Standards %in% 'G' ~ 125,
+                                      Standards %in% 'H' ~ 25,
+                                      Standards %in% 'I' ~ 0)) %>% 
+  dplyr::select(Plate, Standards, BCA_ug_mL, Abs_562nm)
+
+# Run standard curve, calculate totalprotein 
+BCA_background_zero <- BCA_standards %>% 
+                        dplyr::filter(Standards %in% 'I') %>% # the zero standard
+                        dplyr::group_by(Plate, Standards, BCA_ug_mL) %>% # group by to get the means
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+
+# Plate 1, blank to correct by is 0.11120
+# Plate 2, blank to correct by is 0.12215
+
+
+
+# Absorbance corrected - take the mean of any duplicates
+BCA_standards_means <- BCA_standards %>% 
+                        #dplyr::filter(!Type %in% 'Standard_0') %>% 
+                        dplyr::mutate(Abs_562nm_cor = 
+                                     case_when(Plate == 1 ~ (Abs_562nm-0.11120),
+                                               Plate == 2 ~ (Abs_562nm-0.12215) ) ) %>% 
+                        dplyr::select(-Abs_562nm) %>% 
+                        dplyr::group_by(Plate, Standards, BCA_ug_mL) %>% # group by to get the means
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+
+# plot it insert the quadratic formaula using ggpmisc
+BCA_stand_plots_quadratic <- BCA_standards_means %>% 
+                    # QUADRATIC SMOOTH LINE WORKS BEST HERE (MANUFACTURERS INSTRUCTIONS)
+                     ggplot(aes(y=mean, x=BCA_ug_mL)) + 
+                        geom_point() +
+                        theme_bw() +
+                        labs(y= "Net Abs 562nm", x = "Protein Concentration in ug/mL") +
+                        #geom_line() +
+                        #stat_poly_line(color='red') +
+                        #geom_smooth() +
+                        stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1) +
+                        stat_poly_eq(parse=T, aes(label = ..eq.label..), formula=y ~ x + I(x^2)) +
+                        ggtitle('Total protein: Quadratic curve') +
+                        #stat_poly_eq(use_label(c("eq", "R2"))) +
+                        facet_wrap(~Plate) 
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Standard_Curve_BCA_TAOCcorrection.pdf", sep =''), 
+    width=10, 
+    height=7)
+print(ggarrange(BCA_stand_plots_quadratic))
+dev.off()
+
+```
+
+
+
+* Use BCA standard curves to calculate TP 
+
+```{r calc TP}
+
+# Standard curve, Plate 1 equation y = 0.0154 + 0.00125x - 1.17x10^-7x^2 - need to solve for x!
+# Standard curve, Plate 2 equation y = 0.0201 + 0.00133x - 1.32x10^-7x^2 - need to solve for x!
+
+# Standard curve, Plate 1
+a1 <- -1.17*10^-7
+b1 <- 0.00125
+c1 <- 0.0154
+# EQ: (-(b1) + sqrt( (b1^2) - (4*(((a1)-Abs_562nm_cor))*(c1)) ))/(2*a1)
+
+# Standard curve, Plate 2
+a2 <- -1.32*10^-7
+b2 <- 0.00133
+c2 <- 0.0201
+# EQ: (-(b2) + sqrt( (b2^2) - (4*a2*(c2-Abs_562nm_cor)) ) ) / (2*a2)
+
+
+# linear equation plate 1 == (Abs_562nm_cor - 0.192)/0.000993
+# linear equation plate 2 == (Abs_562nm_cor - 0.224)/0.000911
+
+
+# IMPORTANT! we used 25 ul of the standards and 25 ul of the unknowns (samples) 
+# therefore we can interpret the unknown direct to the the standard curve without having 
+# to account for addition factors, fot example, if we used 5 ul unknown (sample) we would have to adjust 
+# by multiplying by 5 to reach the standard curve 
+
+V = 0.025 # 25 ul or 0.025 mL
+
+# Plate 1, blank to correct by is 0.11120
+# Plate 2, blank to correct by is 0.12215
+
+# Sanity check Lets look at the absorbance vs. totla protein concentration data 
+
+TotalProtein_final <- rbind(Plate1_TP.samples, Plate2_TP.samples) %>% 
+                      dplyr::select(Plate,Tank.Number,Temperature.Number,Abs_562nm) %>% 
+                      dplyr::filter(!Abs_562nm > 3.99) %>% # data as 4.00 is above the detection limit, omit
+                      dplyr::mutate(Unique_ID = 
+                                      paste0('Plate',Plate,'_',
+                                             'Tank',Tank.Number, '_',
+                                             'Temperature', Temperature.Number)) %>% # unique ID t0 group by
+                      dplyr::mutate(Abs_562nm_cor = # correct the raw abs, subtract background
+                                   case_when(Plate == 1 ~ (Abs_562nm-0.11120), # for plate 1
+                                             Plate == 2 ~ (Abs_562nm-0.12215) ) ) %>% # for plate 2 
+                      dplyr::mutate(TotalProtein_ug_mL = 
+                                    case_when(
+                                      # linear fr neg discrim. - luckily only two values from plate 2
+                                      # Scallop_ID %in% c(33, 51) ~ 
+                                      #   ((Abs_562nm_cor - 0.224)/0.000911),
+                                      # quadratic for Plate 1
+                                      Plate == 1 ~ 
+                                        ((-(b1) + sqrt( (b1^2) - (4*a1*(c1-Abs_562nm_cor)) ) ) / (2*a1)), 
+                                      # quadratic for plate 2
+                                      Plate == 2 ~ 
+                                        ((-(b2) + sqrt( (b2^2) - (4*a2*(c2-Abs_562nm_cor)) ) ) / (2*a2)) ),
+                                    # ug per mL concentration to ug in 25 ul sample 
+                                    TotalProtein_ug = TotalProtein_ug_mL*V)
+
+# View(TotalProtein_final)
+nrow(TotalProtein_final) # 137
+
+# NOTE! I found that some of my discriminants are negative (b^2 - 4ac) IN PLATE 2!! (as 'NaN)
+# so Im going to extrapolate from a linear regression curve based on the final samples 
+
+# first lets plot absorbance and actual concentration calacuated 
+calc_BCA_plot <- TotalProtein_final %>% 
+                    ggplot(aes(y = Abs_562nm_cor, 
+                               x  = TotalProtein_ug_mL)) +
+                          geom_point() + 
+                    theme_bw() + 
+                    ggtitle('Total protein: Calculated BCA by Net Absorbance') +
+                    facet_wrap(~Plate)
+calc_BCA_plot 
+
+
+#print
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Standard_Curve_BCA_TAOCcorrection.pdf", sep =''), 
+    width=10, 
+    height=14)
+ggarrange(BCA_stand_plots_quadratic,
+          calc_BCA_plot,
+          nrow = 2)
+dev.off()
+# write csv
+write.csv(TotalProtein_final, file = "Output/Colorimetric_assays/Total_Antioxidant_Capacity/Calc_Master_BCA_TAOCcorrection.csv")
+
+
+```
+
+## Total Antioxidant Capacity calculations
+
+### Step 1: Net Absorbance for standards and samples: Calculate by simply subtracting the 
+final reading from the inital, this is the 'net absorbance'
+
+Files: 
+* Plate1.samples, Plate1.standards
+* Plate2.samples, Plate2.standards
+ 
+### Step 2: Generate a Standard Curve - plot the net absorbance of standards against their known uric acid concentration
+
+### Step 3a: Calculate mM uric acid equivalents (UAE) - extrapolate the the ruic acid
+concentration from the OD 490 nm value on uric acid standard curve (output of Step 2) 
+
+### Step 3b: Calculate uM Copper Reducing Equivalents (CRE) - simply muliply UAE * 2189 (mM Cu++)
+the CRE value is proportional to the sample's Total antioxidant capacity 
+
+### Step 4: Correct to individual's per gram total protein - NOTE: make sure you correct using the corresponding 
+volume of fill homogenate for each assay, Pierce BCA assay used 25 ul of homogenate whereas the Oxiselect 
+assay (TAOC) used only 20 ul of gill homogenate. 
+
+* file need: TotalProtein_final
+
+### Plot data and run statistical models for treatment effects
+ * you can  use the ggplot call here to generate y axis units labs(y=expression("Total Antioxidant Capacity"~(~?M~CRE[red]^{-1}*g~total~protein^{-1}))
+
+
+* STEP 1: Net absorbance
+
+  - final [AFTER Cu activation] - initial [BEFORE Cu activation]
+
+```{r Step 1 TAOC - Net Absorbance}
+
+# plate 1
+Plate1_samples_NetAbs <- Plate1.samples %>%  dplyr::select(!c(Standards, Run_date)) %>% 
+                            tidyr::pivot_wider(names_from = Time, values_from = Abs_490nm) %>% 
+                            dplyr::mutate(NetAbs_OD490nm = `AFTER Cu activation` - `BEFORE Cu activation`)
+
+Plate1_standards_NetAbs <- Plate1.standards %>%  dplyr::select(!c(Run_date, Temperature.Number, Tank.Number, Volume)) %>% 
+                            tidyr::pivot_wider(names_from = Time, values_from = Abs_490nm) %>% 
+                            dplyr::mutate(NetAbs_OD490nm = `AFTER Cu activation` - `BEFORE Cu activation`)
+
+# plate 2
+Plate2_samples_NetAbs <- Plate2.samples %>%  dplyr::select(!c(Standards, Run_date)) %>% 
+                            tidyr::pivot_wider(names_from = Time, values_from = Abs_490nm) %>% 
+                            dplyr::mutate(NetAbs_OD490nm = `AFTER Cu activation` - `BEFORE Cu activation`)
+
+Plate2_standards_NetAbs <- Plate2.standards %>%  dplyr::select(!c(Run_date, Temperature.Number, Tank.Number, Volume)) %>% 
+                            tidyr::pivot_wider(names_from = Time, values_from = Abs_490nm) %>% 
+                            dplyr::mutate(NetAbs_OD490nm = `AFTER Cu activation` - `BEFORE Cu activation`)
+
+```
+
+
+* STEP 2: Generate standard curve
+
+  - plot the net absorbance of standards against their known uric acid concentration
+  
+  - NOTE: the first plate has the only good TAOC standard curve, apply this formula to both plates
+  
+```{r Step 2 TAOC - Standard Curve}
+
+# Assign known Uric acid concentration in nM for each standard
+Uric_Acid_standards <- rbind(Plate1_standards_NetAbs, Plate2_standards_NetAbs) %>%  
+                        dplyr::mutate(UricAcid_mM = case_when(Standards == 1 ~ 1,
+                                                            Standards == 2 ~ 0.5,
+                                                            Standards == 3 ~ 0.25,
+                                                            Standards == 4 ~ 0.125,
+                                                            Standards == 5 ~ 0.0625,
+                                                            Standards == 6 ~ 0.03125,
+                                                            Standards == 7 ~ 0.0156,
+                                                            Standards == 8 ~ 0.0078,
+                                                            Standards == 9 ~ 0.0039,
+                                                            Standards == 10 ~ 0)) %>% 
+                        dplyr::select(Plate, Standards, UricAcid_mM, NetAbs_OD490nm)
+
+
+
+# Average by duplicate IDs (Plate and Stnadard ID)
+# note that mean se and sd are of the net absorbance values
+Uric_Acid_standards_means <- Uric_Acid_standards %>% 
+                        dplyr::group_by(Plate, Standards, UricAcid_mM) %>% # group by IDs
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+
+# plot it insert the linear formaula using ggpmisc
+Uric_Acid_standards_linear <- Uric_Acid_standards_means %>% 
+                    # QUADRATIC SMOOTH LINE WORKS BEST HERE (MANUFACTURERS INSTRUCTIONS)
+                     # dplyr::filter(!(Plate %in% 2 & Standards %in% 'D')) %>% # hash me out to test
+                     ggplot(aes(y=mean, x=UricAcid_mM)) + 
+                        geom_point() +
+                        theme_bw() +
+                        labs(y= "Net Abs 480nm", x = "Uric Acid concentration mM") +
+                        #geom_line() +
+                        #stat_poly_line(color='red') +
+                        #geom_smooth() +
+                        stat_smooth(method = "lm", formula = y ~ x, size = 1) +
+                        stat_poly_eq(parse=T, aes(label = ..eq.label..), formula=y ~ x) +
+                        ggtitle('Uric Acid Standards: Quadratic curve') +
+                        #stat_poly_eq(use_label(c("eq", "R2"))) +
+                        facet_wrap(~Plate) 
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Standard_Curve_UricAcid.pdf", sep =''), 
+    width=10, 
+    height=5)
+print(ggarrange(Uric_Acid_standards_linear))
+dev.off()
+
+```
+
+
+
+### STEP 3a: Calculate mM uric acid equivalents (UAE) 
+
+* do this for sample file: Plate1_samples_NetAbs, Plate2_samples_NetAbs
+
+  - standard curve formula: y = 0.0248 + 1.56x; y == Net absorbance at 490 nm; x = uric acid concentration
+  
+* extrapolate the the ruic acid concentration from the OD 490 nm value on uric acid standard curve (output of Step 2) 
+
+```{r Step 3a TAOC - Calculate mM uric acid equivalents (UAE) }
+
+# same formulate for both plates, plate 2 had an error so use the same curve from plate 1 (previous chunk)
+# plate 1 
+Plate1_samples_UAE <- Plate1_samples_NetAbs %>% 
+                            dplyr::mutate(UAE = (NetAbs_OD490nm - 0.0248) / 1.56)
+
+# plate 2
+Plate2_samples_UAE <- Plate2_samples_NetAbs %>% 
+                            dplyr::mutate(UAE = (NetAbs_OD490nm - 0.0248) / 1.56)
+```
+
+**NOTE** : Something is terribly wrong with plate 2, perhaps a reagent was not added, the net absorbance is very low 
+for BOTH standards and samples, **we will need to omit this entire plate from our analysis**
+
+### STEP 3b: Calculate uM Copper Reducing Equivalents (CRE)
+
+* do this for sample file: Plate1_samples_UAE, Plate2_samples_UAE
+
+  - simply muliply UAE * 2189 (mM Cu++), the CRE value is proportional to the sample's Total antioxidant capacity 
+
+```{r Step 3b TAOC - Calculate uM Copper Reducing Equivalents (CRE)}
+
+# plate 1 
+Plate1_samples_CRE <- Plate1_samples_UAE %>% 
+                            dplyr::mutate(CRE = UAE * 2189)
+
+# plate 2
+Plate2_samples_CRE <- Plate2_samples_UAE %>% 
+                            dplyr::mutate(CRE = UAE * 2189)
+
+```
+
+### STEP 4: Correct to total protein
+
+* **Note** Plate 2 is a wash, do not proceed with it, **just proceed with plate 1**
+
+```{r Step 4 TAOC - Correct to individual total gram protein}
+
+# Total protein means per sample (group by and summarise the duplicates!)
+TotalProtein_Plate1_MEANS <- TotalProtein_final %>% 
+                                dplyr::filter(Plate == 1) %>% 
+                                dplyr::select(Plate, Tank.Number, Temperature.Number, TotalProtein_ug_mL) %>% 
+                                dplyr::group_by(Plate, Tank.Number, Temperature.Number) %>% # group by IDs
+                                dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) %>% 
+                                dplyr::select(!c(sd, se)) %>% 
+                                dplyr::rename(TotalProtein_ug_mL = mean)
+# TotalProtein_ug was corrected to the 25 ul used, meaning it is in total protein per ul; we used 
+# 20 ul in the TAOC assay so multiple by 20 for the CRE correction below!
+
+
+# CRE means per sample (group by and summarise the duplicates!)
+Plate1_samples_CRE_MEANS <- Plate1_samples_CRE %>% 
+                                dplyr::select(Plate, Tank.Number, Temperature.Number, CRE) %>% 
+                                dplyr::group_by(Plate, Tank.Number, Temperature.Number) %>% # group by IDs
+                                dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) %>% 
+                                dplyr::select(!c(sd, se)) %>% 
+                                dplyr::rename(CRE = mean)
+
+# CRE corrected to total protein per sample -  20 ul or 0.025 mL
+Plate1_samples_CRE.final <- merge(Plate1_samples_CRE_MEANS, TotalProtein_Plate1_MEANS, 
+                                  by = c('Plate', 'Tank.Number', 'Temperature.Number')) %>% 
+                              dplyr::mutate(CRE_per_ugprotein = CRE / (TotalProtein_ug_mL*0.020),
+                                            Treatment = case_when(Tank.Number %in% c(1:7) ~ 'Ambient',
+                                                                  Tank.Number %in% c(8:14) ~ 'Heated'))
+
+ 
+```
+
+### Plot data and run statistical models for treatment effects
+
+
+```{r Plot data}
+
+# Plate 1 only - no plate 2
+
+MEanSE_TAOC <-  Plate1_samples_CRE.final%>% 
+                        ggplot(aes(x = Temperature.Number, 
+                                   y = CRE_per_ugprotein, 
+                                   colour=Treatment,
+                                   group=Treatment)) +
+                               scale_colour_manual(breaks=c("Ambient", "Heated"), 
+                                                            values=c("forestgreen","orange")) +
+                               geom_point(aes(colour = Treatment), 
+                                              position = position_dodge2(width = 0.4)) + 
+                               stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                            position = position_dodge2(width = 0.4)) +
+                               stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)), 
+                                            fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                            geom = 'errorbar', width = 0.25, size = 1,
+                                            position = position_dodge2(width = 0.4)) +
+                               labs(title="Total Antioxidant Capacity", 
+                                    x ="Temperature",
+                                    y=expression("Total Antioxidant Capacity"~(~uM~CRE[red]^{-1}*~ug~total~protein^{-1}))) +                              
+                               # scale_x_discrete(labels=c("22", "26", "30" , "34", "38")) +
+                               scale_y_continuous(expand = c(0, 0), 
+                                                   limits = c(0, 8), 
+                                                   breaks = seq(0, 8, 
+                                                                by = 2)) +
+                               theme_classic() +
+                               theme(panel.grid.major = element_blank(),  
+                                     panel.grid.minor = element_blank(), 
+                                     # axis.title.y=element_blank(),
+                                     axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                                     axis.text=element_text(size=8),
+                                     plot.title = element_text(size=12),
+                                     legend.position="none") 
+
+
+# Ambient only 
+
+MeanSE_TAOC_ambient <-  Plate1_samples_CRE.final %>% 
+                          dplyr::filter(!(Treatment %in% 'Heated')) %>%
+                          dplyr::mutate(Temperature = case_when(
+                            Temperature.Number == 1 ~ "22_t1",
+                            Temperature.Number == 2 ~ "22_t2",
+                            Temperature.Number == 3 ~ "22_t3",
+                            Temperature.Number == 4 ~ "22_t4",
+                            Temperature.Number == 5 ~ "22_t5",
+                          )) %>%                               
+                               ggplot(aes(x = factor(Temperature), 
+                                   y = CRE_per_ugprotein, 
+                                   colour=Treatment,
+                                   group=Treatment)) +
+                               scale_colour_manual(breaks=("Ambient"), 
+                                                            values=("forestgreen")) +
+                               geom_point(aes(colour = Treatment), 
+                                              position = position_dodge2(width = 0.4)) + 
+                               stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                            position = position_dodge2(width = 0.4)) +
+                               stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)), 
+                                            fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                            geom = 'errorbar', width = 0.25, size = 1,
+                                            position = position_dodge2(width = 0.4)) +
+                               labs(title="Total antioxidant capacity: Ambient", 
+                                    x ="Temperature",
+                                    y=expression("TAOC"~(~uM~CRE[red]^{-1}*~ug~protein^{-1}))) +                   
+                               scale_y_continuous(expand = c(0, 0), 
+                                                   limits = c(0, 8), 
+                                                   breaks = seq(0, 8, 
+                                                                by = 2)) +
+                               theme_classic() +
+                               theme(panel.grid.major = element_blank(),  
+                                     panel.grid.minor = element_blank(), 
+                                     axis.title =element_text(size=12),
+                                     axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                                     axis.text=element_text(size=10),
+                                     plot.title = element_text(size=12),
+                                     legend.position="none")
+
+
+
+# Heated  only 
+
+MeanSE_TAOC_heated <-  Plate1_samples_CRE.final %>% 
+                          dplyr::filter(!(Treatment %in% 'Ambient')) %>%
+                          dplyr::mutate(Temperature = case_when(
+                            Temperature.Number == 1 ~ "22",
+                            Temperature.Number == 2 ~ "26",
+                            Temperature.Number == 3 ~ "30",
+                            Temperature.Number == 4 ~ "34",
+                            Temperature.Number == 5 ~ "38",
+                          )) %>%                               
+                               ggplot(aes(x = factor(Temperature), 
+                                   y = CRE_per_ugprotein, 
+                                   colour=Treatment,
+                                   group=Treatment)) +
+                               scale_colour_manual(breaks=("Heated"), 
+                                                            values=("orange")) +
+                               geom_point(aes(colour = Treatment), 
+                                              position = position_dodge2(width = 0.4)) + 
+                               stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                            position = position_dodge2(width = 0.4)) +
+                               stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)), 
+                                            fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                            geom = 'errorbar', width = 0.25, size = 1,
+                                            position = position_dodge2(width = 0.4)) +
+                               labs(title="Total antioxidant capacity: Heated", 
+                                    x ="Temperature",
+                                    y=expression("TAOC"~(~uM~CRE[red]^{-1}*~ug~protein^{-1}))) +                   
+                               scale_y_continuous(expand = c(0, 0), 
+                                                   limits = c(0, 8), 
+                                                   breaks = seq(0, 8, 
+                                                                by = 2)) +
+                               theme_classic() +
+                               theme(panel.grid.major = element_blank(),  
+                                     panel.grid.minor = element_blank(), 
+                                     axis.title =element_text(size=12),
+                                     axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                                     axis.text=element_text(size=10),
+                                     plot.title = element_text(size=12),
+                                     legend.position="none")
+
+
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Total_Antoixidant_Capacity_AmbinetvHeated.pdf", sep =''), 
+    width=10, 
+    height=4)
+ggarrange(MeanSE_TAOC_ambient, MeanSE_TAOC_heated)
+dev.off()
+
+
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Total_Antioxidant_Capacity_Heated.pdf", sep =''), 
+    width=5, 
+    height=4)
+print(MeanSE_TAOC_heated)
+dev.off()
+
+pdf(paste("Output/Colorimetric_assays/Total_Antioxidant_Capacity/Total_Antioxidant_Capacity_Ambient.pdf", sep =''), 
+    width=5, 
+    height=4)
+print(MeanSE_TAOC_ambient)
+dev.off()
+
+```
+

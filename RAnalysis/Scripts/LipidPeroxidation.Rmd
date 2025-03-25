@@ -1,0 +1,827 @@
+---
+title: "lIPIDpeROXIDATION.Rmd"
+author: "Sam Gurr"
+date: "2024-10-31"
+output: html_document
+---
+
+-   Last updates: 11 13, 2024
+
+# Thermal Performacne (pilot test) & INFISH projet with Indya Limpkin & Ashley Hallengren
+
+## Ran a Lipid peroxidation kit on C virginica gill tissue homogenate, corrected to
+
+total protein using pierce BCA protein assay (albumin standard)
+
+### SET UP
+
+* note: add your own directory below to navigate to RAnalysis folder containing the data, output, and script subfolders 
+that reflect the google drive. alterntively clone the repository EAD-ASEB-Cvirginica_Thermal_Performance from github
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# SET WORKING DIRECTORY 
+# knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
+knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+#knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+
+```
+
+
+## Load packages 
+
+* use install.packges('pacakge name') if you do not have these downloaded
+```{r setup, include=TRUE}
+
+library(ggpubr)
+library(ggplot2)
+library(dplyr)
+library(lmtest) # to receive p value from betareg model
+# library(FSA) # for the Dun test post hoc for SRH non-parametric 2 way anova]
+library(emmeans)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(car)
+library(lmerTest)
+library(tidyr)
+library(reshape2)
+library(ggpubr)
+library(nlme)
+library(rcompanion) # to run the Schrier -Ray-Hare non parametric 2 way 
+library(ggpmisc) # stat_poly for inserting equation and R2 for ggplot line 
+```
+
+## Function to load files
+
+-   At your service, from 'spec to table' ...I'm so funny
+
+```{r Spec_to_table}
+
+Spec_to_table <- function(datapath, platenumber, daterecorded) {
+  
+# import the data in raw text form exported from the spectrophotometer
+        rawtextfile <- read.delim(datapath,
+                              header = F,
+                              skip=3,
+                              fileEncoding="latin1")
+  
+
+        rawmatrix   <- as.matrix(rawtextfile[c(1:8),c(3:14)])
+        colnames(rawmatrix) = c("1","2","3","4","5","6","7","8","9","10","11","12")
+        rownames(rawmatrix) = c("A","B","C","D","E","F","G","H")
+        
+        raw_table <- as.data.frame.table(rawmatrix, responseName = "value") %>% 
+                                    dplyr::rename(well_row=Var1, well_column=Var2, Abs_412nm=value) %>% 
+                                    dplyr::mutate(well=paste0(well_row,well_column),
+                                                  Run_date =daterecorded,
+                                                  Plate=platenumber) %>% 
+                                    dplyr::select(-c(well_row,well_column))
+        # reorder the columns because I prefer it this way..
+        
+        raw_table_ordered <- raw_table[,c(3,4,2,1)]
+}
+
+
+```
+
+-   Use the spec_to_table to import raw spec txt files and compile to a table, yes that is what it does
+
+-   add an "about" column - we have a few hiccups with this assay and reran it with dilutions
+
+  - no dilution = ran without additional dilutions 
+  - 5x dilution post = after we ran the no dilution we saw any values were ut of range (too high) we diluted 5x with ultrapure water direct to the plate and reran
+  - 5x dilution post 30 mins = same as the 5 x dilution but after a 30 minute incubation we ran it again
+
+```{r load Succinate Synthase raw data and build master files}
+
+# plate 1 
+MDA_Plate1 <- Spec_to_table('Data/Lipid_Peroxidation/20241016_LipidPeroxidation_Plate1.txt', 1, 20241016)
+
+# plate 2
+MDA_Plate2 <- Spec_to_table('Data/Lipid_Peroxidation/20241016_LipidPeroxidation_Plate2.txt', 2, 20241016)
+
+```
+
+```{r load Total protein correction data for succinate}
+
+# plate 1 
+TP_Plate1_master <- Spec_to_table('Data/Total_Protein_Lipid_Peroxidation/20241017_TotalProtein_LipidPeroxidation_Plate1_37C.txt', 1, 20241017)  %>%  dplyr::rename(Abs_562nm = Abs_412nm)
+
+# plate 2
+TP_Plate2_master <- Spec_to_table('Data/Total_Protein_Lipid_Peroxidation/20241017_TotalProtein_LipidPeroxidation_Plate2_37C.txt', 2, 20241017)   %>%  dplyr::rename(Abs_562nm = Abs_412nm)
+
+```
+
+
+```{r load reference metadata and call target datasets}
+
+metadata <- read.csv('Data/Lipid_peroxidation_metadata.csv', sep = ",", header=T)
+
+# rename a few columns so they can merge with the data (in next chunk)
+
+# Plate 1 
+metadata.MDA_Plate_1 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Lipid Peroxidation" & Plate.Number == 1) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+# Plate 2
+metadata.MDA_Plate_2 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Lipid Peroxidation" & Plate.Number == 2) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+
+
+
+# Plate 1 
+metadata.TP_Plate_1 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Protein" & Plate.Number == 1) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+# Plate 2
+metadata.TP_Plate_2 <- metadata %>% 
+                        dplyr::filter(Assay.Type %in% "Total Protein" & Plate.Number == 2) %>% 
+                        dplyr::rename(Plate = Plate.Number,
+                                      well  = Well.ID)
+
+
+
+```
+
+
+* merge metadata with data 
+```{r merge metadata with data}
+
+# MDA
+# Plate 1 
+Plate1 <- merge(metadata.MDA_Plate_1, MDA_Plate1, by = c('Plate', 'well'))                          
+nrow(MDA_Plate1) == nrow(Plate1) # must be TRUE
+Plate1 <- subset(Plate1, !is.na(Sample.Type)) # 96 rows
+
+
+# Plate 2
+Plate2 <- merge(metadata.MDA_Plate_2, MDA_Plate2, by = c('Plate', 'well'))                          
+nrow(MDA_Plate2) == nrow(Plate2) # must be TRUE - NOT HERE THOUGH because metadtata did not include the empty IDs, we have 78 with sample, all good
+Plate2 <- subset(Plate2, !is.na(Sample.Type)) # now 68 with NAs excluded
+
+
+# Total protein
+# Plate 1 
+Plate1.TP <- merge(metadata.TP_Plate_1, TP_Plate1_master, by = c('Plate', 'well'))                          
+nrow(TP_Plate1_master) == nrow(Plate1.TP) # must be TRUE
+Plate1.TP <- subset(Plate1.TP, !is.na(Sample.Type)) # 96 rows
+
+# Plate 2 
+Plate2.TP <- merge(metadata.TP_Plate_2, TP_Plate2_master, by = c('Plate', 'well'))                          
+nrow(TP_Plate2_master) == nrow(Plate2.TP) # must be TRUE - NOT HERE THOUGH 
+Plate2.TP <- subset(Plate2.TP, !is.na(Sample.Type)) # now 80 total rows with NAs omitted (not sample, blank nor stnadard)
+
+
+```
+
+
+* subset standards, blanks, and samples
+```{r subset data types}
+
+# Citrate synthase 
+# Plate 1 
+Plate1.samples   <- Plate1 %>% dplyr::filter(Sample.Type %in% 'Sample') %>% dplyr::rename(Abs_532nm = Abs_412nm)
+# Plate1.blanks    <- Plate1 %>% dplyr::filter(Sample.Type %in% 'Blank') # space, why... whatevs
+Plate1.standards <- Plate1 %>% dplyr::filter(Sample.Type %in% c('Blank','Standard')) %>% 
+                               dplyr::rename(Abs_532nm = Abs_412nm) %>% 
+                               dplyr::mutate(nmolMDA = # ashely input metadata for the u; standard, convert to the uM MDA
+                                              case_when(Standards == 0 ~ 0, 
+                                                        Standards == 6 ~ 2,
+                                                        Standards == 12 ~ 4, 
+                                                        Standards == 18 ~ 6, 
+                                                        Standards == 24 ~ 8, 
+                                                        Standards == 30 ~ 10))
+
+(nrow(Plate1.samples) + 
+    # nrow(Plate1.blanks) + 
+      nrow(Plate1.standards)) == nrow(Plate1) # sanity check, must be true
+
+
+# Plate 2
+Plate2.samples   <- Plate2 %>% dplyr::filter(Sample.Type %in% 'Sample') %>% dplyr::rename(Abs_532nm = Abs_412nm)
+# Plate2.blanks    <- Plate2 %>% dplyr::filter(Sample.Type %in% 'Blank')  # space, why... whatevs
+Plate2.standards <- Plate2 %>% dplyr::filter(Sample.Type %in% c('Blank','Standard')) %>% 
+                               dplyr::rename(Abs_532nm = Abs_412nm) %>% 
+                               dplyr::mutate(nmolMDA = # ashely input metadata for the u; standard, convert to the uM MDA
+                                              case_when(Standards == 0 ~ 0, 
+                                                        Standards == 6 ~ 2,
+                                                        Standards == 12 ~ 4, 
+                                                        Standards == 18 ~ 6, 
+                                                        Standards == 24 ~ 8, 
+                                                        Standards == 30 ~ 10))
+                                
+
+(nrow(Plate2.samples) + 
+    # nrow(Plate2.blanks) + 
+    nrow(Plate2.standards)) == nrow(Plate2) # sanity check, must be true
+
+
+
+
+
+
+# Total protein
+# Plate 1 
+Plate1_TP.samples    <- Plate1.TP %>% dplyr::filter(Sample.Type %in% 'Sample')
+Plate1_TP.blanks     <- Plate1.TP %>% dplyr::filter(Sample.Type %in% 'Blank')
+Plate1_TP.standards  <- Plate1.TP %>% dplyr::filter(Sample.Type %in% c('Standard', 'Blank'))
+
+(nrow(Plate1_TP.samples) + 
+    # nrow(Plate1_TP.blanks) + 
+      nrow(Plate1_TP.standards)) == nrow(Plate1.TP) # sanity check, must be true
+
+
+# Plate 2
+Plate2_TP.samples    <- Plate2.TP %>% dplyr::filter(Sample.Type %in% 'Sample')
+Plate2_TP.blanks     <- Plate2.TP %>% dplyr::filter(Sample.Type %in% 'Blank') 
+Plate2_TP.standards  <- Plate2.TP %>% dplyr::filter(Sample.Type %in% c('Standard', 'Blank'))
+
+(nrow(Plate2_TP.samples) + 
+    # nrow(Plate2_TP.blanks) + 
+      nrow(Plate2_TP.standards)) == nrow(Plate2.TP) # sanity check, must be true
+
+```
+
+## Total protein calculations 
+
+```{r total protein standard curve}
+
+# assign known BCA values to standard IDs A-I
+BCA_standards <- rbind(Plate1_TP.standards, Plate2_TP.standards) %>%  
+  dplyr::mutate(BCA_ug_mL = case_when(Standards %in% 'A' ~ 2000,
+                                      Standards %in% 'B' ~ 1500,
+                                      Standards %in% 'C' ~ 1000,
+                                      Standards %in% 'D' ~ 750,
+                                      Standards %in% 'E' ~ 500,
+                                      Standards %in% 'F' ~ 250,
+                                      Standards %in% 'G' ~ 125,
+                                      Standards %in% 'H' ~ 25,
+                                      Standards %in% 'I' ~ 0)) %>% 
+  dplyr::select(Plate, Standards, BCA_ug_mL, Abs_562nm)
+
+# Run standard curve, calculate totalprotein 
+BCA_background_zero <- BCA_standards %>% 
+                        dplyr::filter(Standards %in% 'I') %>% # the zero standard
+                        dplyr::group_by(Plate, Standards, BCA_ug_mL) %>% # group by to get the means
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+
+# Plate 1, blank to correct by is 0.07925
+# Plate 2, blank to correct by is 0.08185
+
+
+
+# Absorbance corrected - take the mean of any duplicates
+BCA_standards_means <- BCA_standards %>% 
+                        dplyr::filter(!BCA_ug_mL %in% 0) %>% 
+                        dplyr::mutate(Abs_562nm_cor = 
+                                      case_when(Plate == 1 ~ (Abs_562nm-0.07925),
+                                                Plate == 2 ~ (Abs_562nm-0.08185) ) ) %>% 
+                        dplyr::select(-Abs_562nm) %>% 
+                        dplyr::group_by(Plate, Standards, BCA_ug_mL) %>% # group by to get the means
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+
+# plot it insert the quadratic formaula using ggpmisc
+BCA_stand_plots_quadratic <- BCA_standards_means %>% 
+                    # QUADRATIC SMOOTH LINE WORKS BEST HERE (MANUFACTURERS INSTRUCTIONS)
+                     # dplyr::filter(!(Plate %in% 2 & Standards %in% 'D')) %>% # hash me out to test
+                     ggplot(aes(y=mean, x=BCA_ug_mL)) + 
+                        geom_point() +
+                        theme_bw() +
+                        labs(y= "Net Abs 562nm", x = "Protein Concentration in ug/mL") +
+                        #geom_line() +
+                        #stat_poly_line(color='red') +
+                        #geom_smooth() +
+                        stat_smooth(method = "lm", formula = y ~ x + I(x^2), size = 1) +
+                        stat_poly_eq(parse=T, aes(label = ..eq.label..), formula=y ~ x + I(x^2)) +
+                        ggtitle('Total protein: Quadratic curve') +
+                        #stat_poly_eq(use_label(c("eq", "R2"))) +
+                        facet_wrap(~Plate) 
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Lipid_Peroxidation/Standard_Curve_BCA_MDAcorrection.pdf", sep =''), 
+    width=10, 
+    height=7)
+print(ggarrange(BCA_stand_plots_quadratic))
+dev.off()
+
+```
+
+
+* Use BCA standard curves to calculate TP 
+
+```{r calc TP}
+library(grDevices)
+# Standard curve, Plate 1 equation y = -0.0189 + 0.00101x - 7.71x10^-8x^2 - need to solve for x!
+# Standard curve, Plate 2 equation y = --0.0189 + 0.00196x - 4.42x10^-7x^2 - need to solve for x!
+
+# Standard curve, Plate 1
+a1 <- -1.92*10^-7
+b1 <- 0.00159
+c1 <- -0.0158
+# EQ: (-(b1) + sqrt( (b1^2) - (4*(((a1)-Abs_562nm_cor))*(c1)) ))/(2*a1)
+
+# Standard curve, Plate 2
+a2 <- -2*10^-7
+b2 <- 0.00152
+c2 <- 0.00093
+# EQ: (-(b2) + sqrt( (b2^2) - (4*a2*(c2-Abs_562nm_cor)) ) ) / (2*a2)
+
+
+# linear equation plate 1 == (Abs_562nm_cor - 0.192)/0.000993
+# linear equation plate 2 == (Abs_562nm_cor - 0.224)/0.000911
+
+
+# IMPORTANT! we used 25 ul of the standards and 25 ul of the unknowns (samples) 
+# therefore we can interpret the unknown direct to the the standard curve without having 
+# to account for addition factors, fot example, if we used 5 ul unknown (sample) we would have to adjust 
+# by multiplying by 5 to reach the standard curve 
+
+V = 0.025 # 25 ul or 0.025 mL
+
+# Again, remember Plate 1, blank to correct by is 0.1372
+# Again, remember Plate 2, blank to correct by is 0.1312
+
+# Sanity check Lets look at the absorbance vs. totla protein concentration data 
+
+TotalProtein_final <- rbind(Plate1_TP.samples, Plate2_TP.samples) %>% 
+                      dplyr::filter(!Abs_562nm >= 4) %>% 
+                      dplyr::select(Plate,Tank.Number,Temperature.Number,Abs_562nm) %>% 
+                      # dplyr::filter(!Abs_562nm > 3.99) %>% # data as 4.00 is above the detection limit, omit
+                      dplyr::mutate(Unique_ID = 
+                                      paste0('Tank',Tank.Number, '_',
+                                             'Temperature', Temperature.Number)) %>% # unique ID t0 group by
+                      dplyr::mutate(Abs_562nm_cor = # correct the raw abs, subtract background
+                                   case_when(Plate == 1 ~ (Abs_562nm-0.07925), # for plate 1
+                                             Plate == 2 ~ (Abs_562nm-0.08185) ) ) %>% # for plate 2 
+                      dplyr::mutate(TotalProtein_ug_mL = 
+                                    case_when(
+                                      # linear fr neg discrim. - luckily only two values from plate 2
+                                      # Scallop_ID %in% c(33, 51) ~ 
+                                      #   ((Abs_562nm_cor - 0.224)/0.000911),
+                                      # quadratic for Plate 1
+                                      Plate == 1 ~ 
+                                        ((-(b1) + sqrt( (b1^2) - (4*a1*(c1-Abs_562nm_cor)) ) ) / (2*a1)), 
+                                      # quadratic for plate 2
+                                      Plate == 2 ~ 
+                                        ((-(b2) + sqrt( (b2^2) - (4*a2*(c2-Abs_562nm_cor)) ) ) / (2*a2)) ),
+                                    # ug per mL concentration to ug in 25 ul sample 
+                                    TotalProtein_ug = TotalProtein_ug_mL*V) %>% 
+                      na.omit()
+
+length(unique(TotalProtein_final$Unique_ID)) # 36 samples retained for total protein
+
+# View(TotalProtein_final)
+nrow(TotalProtein_final) # 45
+
+# NOTE! I found that some of my discriminants are negative (b^2 - 4ac) IN PLATE 2!! (as 'NaN)
+# so Im going to extrapolate from a linear regression curve based on the final samples 
+
+# first lets plot absorbance and actual concentration calacuated 
+calc_BCA_plot <- TotalProtein_final %>% 
+                    ggplot(aes(y = Abs_562nm_cor, 
+                               x  = TotalProtein_ug_mL)) +
+                          geom_point() + 
+                    theme_bw() + 
+                    ggtitle('Total protein: Calculated BCA by Net Absorbance') +
+                    facet_wrap(~Plate)
+calc_BCA_plot 
+
+#print
+pdf(paste("Output/Colorimetric_assays/Lipid_Peroxidation/Standard_Curve_BCA_MDAcorrection.pdf", sep =''), 
+    width=10, 
+    height=14)
+ggpubr::ggarrange(BCA_stand_plots_quadratic,
+          calc_BCA_plot,
+          nrow = 2)
+dev.off()
+# write csv
+write.csv(TotalProtein_final, file = "Output/Colorimetric_assays/Lipid_Peroxidation/TotalProteinBCA_MDAcorrection.csv")
+
+
+```
+
+
+###  THIS IS WHERE I LEFT OFF ON 11/13/2024 
+* NOTE: the code below is from the succinate script, need to change throughout to accomodate the variables and values in chunks above
+
+
+## Lipid Peroxidation Calculations
+
+
+* STEP 1: Blanks
+
+  - calc the mean blanks by time and plate. 
+  
+  - **note** this is not a normal blank, but the change of the blank 
+  over time final - time initial. This is important downstream in the calculation, youll see later..
+
+  -  **remember** we recorded every 5 minutes unitl the samples surpased the highest standard
+we only need timepoint initial and timepoint end, lets average for each and truncate later..
+```{r blank rate}
+
+BCA_background_zero <- BCA_standards %>% 
+                        dplyr::filter(Standards %in% 'I') %>% # the zero standard
+                        dplyr::group_by(Plate, Standards, BCA_ug_mL) %>% # group by to get the means
+                        dplyr::summarise_each(funs(mean,sd,se=sd(.)/sqrt(n()))) # get all the stats 
+
+Plate1.blanks.means <- BCA_background_zero[1,]
+Plate2.blanks.means <- BCA_background_zero[2,]
+# Plate 1, blank to correct by is 0.07925
+# Plate 2, blank to correct by is 0.08185
+
+```
+
+
+
+* STEP 2: Correct for background
+
+  - From protocol (Fluorometric protocol was used!): Determine the slope of the standard florescence values 
+  and calculate the the succinate concetration as follows
+
+SUccinate (uM) = [ F(sample) - F(blank) x n ] / slope (uM)-1
+
+n = sample dilution factor 
+
+**note** if the calculated succinate concentration is >40uM for the Fluorometric assay, dilute the sample in ultrapure water and repeat the assay,
+multipley by the dilution factor 
+
+**important** in one of our succinate runs we diluted the sample that was already in the wells and recorded, The authors here seem to refer to the sample 
+before all reagents are added and incubated to truly 'dilute' the signal, time will tell below whether this is the case because we ran it different ways 
+in order to test! 
+
+  * remember - we used ~10 mg tissue for each sample, keep this is mind when/of repeating this assay
+  
+```{r Correct for background}
+
+## Objectve to subtract the blank from all standards and samples. 
+
+# Plate 1 
+
+Plate1.standards.sub <- Plate1.standards %>% 
+                          dplyr::mutate(Abs_532nm_sub = 
+                                          case_when(nmolMDA > 0 ~ Abs_532nm - Plate1.blanks.means$mean,
+                                                    
+                                                    nmolMDA == 0 ~ 0
+                                                    
+                                                    ))
+
+
+Plate2.samples.sub <- Plate1.samples %>% 
+                          dplyr::mutate(Abs_532nm_sub = Abs_532nm - Plate1.blanks.means$mean)
+
+
+# plate 2
+
+
+Plate2.standards.sub <-  Plate2.standards %>% 
+                          dplyr::mutate(Abs_532nm_sub = 
+                                          case_when(nmolMDA > 0 ~ Abs_532nm - Plate2.blanks.means$mean,
+                                                    
+                                                    nmolMDA == 0 ~ 0
+                                                    
+                                                    ))
+
+
+Plate2.samples.sub <- Plate2.samples %>% 
+                          dplyr::mutate(Abs_532nm_sub = Abs_532nm - Plate2.blanks.means$mean)
+
+
+```
+
+
+```{r Lipid peroxidation standard curves}
+library('ggpmisc')
+
+# Plate 1
+Plate1_standard_curve <- Plate1.standards.sub %>% 
+                                    dplyr::select(nmolMDA, Abs_532nm_sub) %>% 
+                                    # dplyr::filter(Time_min %in% 30) %>% 
+                                    dplyr::group_by(nmolMDA) %>% 
+                                    dplyr::summarise(meanAbs = mean(Abs_532nm_sub),
+                                                     sdAbs   = sd(Abs_532nm_sub),
+                                                     n = n()) %>% 
+                          
+                          ggplot(aes(x = as.numeric(nmolMDA), y = as.numeric(meanAbs))) + 
+                          geom_point() + 
+                          stat_poly_line() +
+                          stat_poly_eq(use_label(c("eq", "R2"))) +
+                          theme_bw() + 
+                          xlab('known uM MDA') +
+                          ylab('Abs at 532 nm') 
+
+
+# Plate 2
+Plate2_standard_curve <- Plate2.standards.sub %>% 
+                                    dplyr::select(nmolMDA, Abs_532nm_sub) %>% 
+                                    # dplyr::filter(Time_min %in% 30) %>% 
+                                    dplyr::group_by(nmolMDA) %>% 
+                                    dplyr::summarise(meanAbs = mean(Abs_532nm_sub),
+                                                     sdAbs   = sd(Abs_532nm_sub),
+                                                     n = n()) %>% 
+                          
+                          ggplot(aes(x = as.numeric(nmolMDA), y = as.numeric(meanAbs))) + 
+                          geom_point() + 
+                          stat_poly_line() +
+                          stat_poly_eq(use_label(c("eq", "R2"))) +
+                          theme_bw() + 
+                          xlab('known uM MDA') +
+                          ylab('Abs at 532 nm')
+
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Lipid_Peroxidation/Standard_Curve_Lipid_Peroxidation.pdf", sep =''), 
+    width=10, 
+    height=5)
+ggarrange(Plate1_standard_curve,
+  Plate2_standard_curve,
+  nrow=2)
+dev.off()
+
+```
+
+## Calculate lipid peroxidation 
+
+* as written in the protocol...
+
+1. Average the duplicate reading for each standard and sample.
+
+*done in the chunk above for standards* 
+
+*do this in the chunk below for the samples* 
+
+2. Subtract the mean value of the blank (Standard #1) from all standards and sample
+readings. This is the corrected absorbance.
+
+*done in the chunks above in Plate1.samples.sub and Plate2.samples.sub* 
+
+3. Plot the corrected values for each standard as a function of the final concentration of
+MDA.
+
+*done in the chunk above , plot to show the y = mx+ b equation* 
+
+4. Draw the best smooth curve through these points to construct the standard curve. Most
+plate reader software or Excel can plot these values and curve fit. Calculate the trendline
+equation based on your standard curve data (use the equation that provides the most
+accurate fit).
+
+*done in the chunk above , plot to show the y = mx+ b equation* 
+
+5. Apply the corrected sample OD reading to the standard curve to get MDA amount (y =
+mx + b) in the sample wells.
+
+*do this in the chunk below for the samples* 
+
+6. Concentration of MDA in the test samples is calculated as:
+
+  MDA Concentration = ( A / [mg or mL]) x 4 x D = nmol per ml or nmol mg
+  
+  A = Amount of MDA in sample calculated from the standard curve (nmol).*in other words solve for y from the stnadrd eq above*
+  mg = Original tissue amount used (e.g. 10 mg). *we did not measure this, instead correct to total protein* 
+  mL = Original plasma volume used (0.020 mL). *not applicable*
+  4* = Correction for using 200 μL of the 800 μL Reaction Mix. *do this*
+  D = Sample dilution factor if sample is diluted to fit within the standard curve range (prior
+  to reaction well set up). *we did not dilute further in our runs, no need for D*
+
+* **NOTE** we did not quantify the amount of starting tissue but instead we will correct to 
+total protein of the sample tissue homogenate
+
+
+
+```{r Calculate Lipid peroxidation}
+
+library(tidyr)
+
+# y = mx + b for plates 1 and 2 
+# plate 1
+m1 = 0.296
+b1 = -0.0139
+# plate 2
+m2 = 0.297
+b2 = -0.0169
+
+
+# mean total protein
+meanTP <- TotalProtein_final %>%  
+                    group_by(Unique_ID) %>% 
+                    dplyr::summarise(meanTotalProtein_ug_mL = mean(TotalProtein_ug_mL))
+nrow(meanTP) # 29 sample for total protein, remeber we had a ton f samples above our absorbance threshold
+length(unique(meanTP$Unique_ID)) # 29
+
+# Raw Lipid per oxidation from y = mx + b alone
+
+meanMDA_raw <- rbind(Plate1.samples, Plate2.samples) %>% 
+                        dplyr::select(Plate, Temperature.Number, Tank.Number, Volume, Abs_532nm) %>% 
+                        dplyr::mutate(Unique_ID = paste0('Tank',Tank.Number,'_', 'Temperature',  Temperature.Number)) %>% # unique ID t0 group by
+                        dplyr::group_by(Plate, Temperature.Number, Tank.Number, Unique_ID) %>% 
+                        dplyr::summarise(meanAbs = mean(Abs_532nm)) %>% 
+                        dplyr::mutate(A = case_when(Plate == 1 ~ (m1*meanAbs) + b1, # y = mx + b
+                                                    Plate == 2 ~ (m2*meanAbs) + b2),
+                                      Treatment = case_when(Tank.Number %in% c(1:7) ~ 'Ambient',
+                                                            Tank.Number %in% c(8:14) ~ 'Heated'))
+
+
+MDA_per.ug.protein <- merge(meanMDA_raw, meanTP, 
+                                  by = c('Unique_ID')) %>% 
+                                # TotalProtein_ug is the amount of proetin in 25 ul of homogenate 
+                                # correct for the volume in the Succiante sample, in all cases we used 20 ul of the homogenate
+                                # to measure MDA
+                                # (TotalProtein_ug_mL*(20/1000) - to 
+                                dplyr::mutate(MDA_uM_ug_protein = (A/ (meanTotalProtein_ug_mL*(200/1000)) ) * 4) %>% 
+                                # filter(!Cs_Activty_per_ug_protein < 0) %>% 
+                                dplyr::select(Temperature.Number,
+                                              Tank.Number,
+                                              Treatment,
+                                              Unique_ID,
+                                              meanAbs,
+                                              A,
+                                              meanTotalProtein_ug_mL,
+                                              MDA_uM_ug_protein
+                                              ) #%>% 
+                                # dplyr::group_by(Unique_ID, Temperature.Number, Tank.Number, Treatment) %>% 
+                                # dplyr::summarise(meanTotalProtein_ug_mL = mean(TotalProtein_ug_mL),n= n(),
+                                                 # MDA_uM_ug_protein = median(MDA_uM_ug_protein)) 
+nrow(MDA_per.ug.protein) # 29
+
+
+### master table 
+Master_Table <- MDA_per.ug.protein %>% 
+                  # dplyr::filter(!meanCs_Activity_ug_protein < 0) %>% 
+                  dplyr::mutate(Temperature = case_when(
+                    Temperature.Number == 1 & Treatment %in% 'Heated' ~ "22",
+                    Temperature.Number == 2 & Treatment %in% 'Heated' ~ "26",
+                    Temperature.Number == 3 & Treatment %in% 'Heated' ~ "30",
+                    Temperature.Number == 4 & Treatment %in% 'Heated' ~ "34",
+                    Temperature.Number == 5 & Treatment %in% 'Heated' ~ "36",
+                 
+                    Temperature.Number == 1 & Treatment %in% 'Ambient' ~ "22_t1",
+                    Temperature.Number == 2 & Treatment %in% 'Ambient' ~ "22_t2",
+                    Temperature.Number == 3 & Treatment %in% 'Ambient' ~ "22_t3",
+                    Temperature.Number == 4 & Treatment %in% 'Ambient' ~ "22_t4",
+                    Temperature.Number == 5 & Treatment %in% 'Ambient' ~ "22_t5",
+                  )) %>% 
+                  dplyr::rename(Timepoint = Temperature.Number)
+
+# write csv
+write.csv(Master_Table, file = "Output/Colorimetric_assays/Lipid_Peroxidation/Calc_Master_Lipid_Peroxidation.csv")
+
+
+
+```
+
+
+```{r plot data}
+# plot all data above 0
+Plot_MeanSE <- Master_Table %>% 
+                  # dplyr::filter(!MDA_uM_ug_protein > 350) %>%
+                  # dplyr::filter(!meanSuccinate_per_ug_protein_10xpre > 600) %>%
+                  ggplot(aes(x = as.factor(Temperature), 
+                             y = MDA_uM_ug_protein,
+                             # y = meanSuccinate_per_ug_protein_10xpre,
+                             color=Treatment,
+                             group=Treatment)) +
+                         scale_colour_manual(breaks=c("Ambient", "Heated"), 
+                                                             values=c("forestgreen","orange")) +
+                         geom_point(aes(colour = Treatment), 
+                                        position = position_dodge2(width = 0.4)) + 
+                         stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                      position = position_dodge2(width = 0.4)) +
+                         stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)), 
+                                      fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                      geom = 'errorbar', width = 0.25, size = 1,
+                                      position = position_dodge2(width = 10.4)) +
+                         labs(title="uM MDA ug total protein", 
+                              x ="Temperature", 
+                              y = expression("MDA"~(~uM^{-1}*~ug~protein^{-1}))) + #"CS activity per g protein") +
+                        # scale_x_discrete(labels=c("22", "26", "30" , "34", "36")) +
+                         # scale_y_continuous(expand = c(0, 0), limits = c(0, 0.00035), 
+                                            # breaks = seq(0, 0.00035, by = 0.00007)) +
+                         theme_classic() +
+                         theme(panel.grid.major = element_blank(),  
+                               panel.grid.minor = element_blank(), 
+                               axis.title =element_text(size=12),
+                               axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                               axis.text=element_text(size=10),
+                               plot.title = element_text(size=12),
+                               legend.position="none") + 
+                        facet_wrap(~Treatment, scales= "free_x")
+
+# plot all data above 0 - omit outliers and present only the heated treatment
+Plot_MeanSE_ambient <- Master_Table %>% 
+                  dplyr::filter(!(Treatment %in% 'Heated'))%>%
+                  ggplot(aes(x = as.factor(Temperature),
+                             y = MDA_uM_ug_protein,
+                             color=Treatment)) +
+                         scale_colour_manual(breaks=("Ambient"),
+                                             values=("forestgreen")) +
+                         geom_point(aes(colour = Treatment),
+                                        position = position_dodge2(width = 0.4)) +
+                         stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                      position = position_dodge2(width = 0.4)) +
+                         stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)),
+                                      fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                      geom = 'errorbar', width = 0.25, size = 1,
+                                      position = position_dodge2(width = 10.4)) +
+                         labs(title="uM MDA ug total protein", 
+                              x ="Temperature",
+                              y = expression("MDA"~(~uM^{-1}*~ug~protein^{-1}))) + #"CS activity per g protein") +
+                        # scale_x_discrete(labels=c("22", "26", "30" , "34", "36")) +
+                         # scale_y_continuous(expand = c(0, 0), limits = c(0, 0.00035),
+                         #                    breaks = seq(0, 0.00035, by = 0.00007)) +
+                         theme_classic() +
+                         theme(panel.grid.major = element_blank(),
+                               panel.grid.minor = element_blank(),
+                               axis.title =element_text(size=12),
+                               axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                               axis.text=element_text(size=10),
+                               plot.title = element_text(size=12),
+                               legend.position="none")
+
+# Plot_MeanSE_ambient
+
+# plot all data above 0 - omit outliers and present only the heated treatment
+Plot_MeanSE_heated <- Master_Table %>% 
+                  dplyr::filter(!(Treatment %in% 'Ambient')) %>%
+                  ggplot(aes(x = as.factor(Temperature),
+                             y = MDA_uM_ug_protein,
+                             color=Treatment)) +
+                         scale_colour_manual(breaks=("Heated"),
+                                             values=("orange")) +
+                         geom_point(aes(colour = Treatment),
+                                        position = position_dodge2(width = 0.4)) +
+                         stat_summary(fun.y="mean", size = 0.8, color = "black",
+                                      position = position_dodge2(width = 0.4)) +
+                         stat_summary(fun.min = function(x) mean(x) - sd(x)/sqrt(length(x)),
+                                      fun.max = function(x) mean(x) + sd(x)/sqrt(length(x)),
+                                      geom = 'errorbar', width = 0.25, size = 1,
+                                      position = position_dodge2(width = 10.4)) +
+                         labs(title="uM MDA ug total protein", 
+                              x ="Temperature",
+                              y = expression("MDA"~(~uM^{-1}*~ug~protein^{-1}))) + #"CS activity per g protein") +
+                        # scale_x_discrete(labels=c("22", "26", "30" , "34", "36")) +
+                         # scale_y_continuous(expand = c(0, 0), limits = c(0, 0.00035),
+                         #                    breaks = seq(0, 0.00035, by = 0.00007)) +
+                         theme_classic() +
+                         theme(panel.grid.major = element_blank(),
+                               panel.grid.minor = element_blank(),
+                               axis.title =element_text(size=12),
+                               axis.text.x = element_text(angle = 0, vjust = 0.5, hjust=1),
+                               axis.text=element_text(size=10),
+                               plot.title = element_text(size=12),
+                               legend.position="none")
+
+
+ggarrange(Plot_MeanSE_ambient, Plot_MeanSE_heated)
+
+# output 
+pdf(paste("Output/Colorimetric_assays/Lipid_Peroxidation/Lipid_Peroxidation_AmbinetvHeated.pdf", sep =''), 
+    width=10, 
+    height=4)
+ggarrange(Plot_MeanSE_ambient, Plot_MeanSE_heated)
+dev.off()
+
+
+# pdf(paste("Output/Colorimetric_assays/Citrate_Synthase/Citrate_Synthase_Heated.pdf", sep =''), 
+#     width=5, 
+#     height=4)
+# print(Plot_MeanSE_heated)
+# dev.off()
+# 
+# pdf(paste("Output/Colorimetric_assays/Citrate_Synthase/Citrate_Synthase_Ambient.pdf", sep =''), 
+#     width=5, 
+#     height=4)
+# print(Plot_MeanSE_ambient)
+# dev.off()
+
+```
+
+
+# STATISTICS
+
+
+```{r run stats}
+library(rstatix)
+Master <- rbind(Plate_1_CS_per.g.protein, Plate_2_CS_per.g.protein) %>% 
+                  dplyr::filter(!(meanCs_Activty < 0  | meanCs_Activty > 0.0006)) %>%
+                  dplyr::mutate(Temperature = case_when(
+                    Temperature.Number == 1 ~ "22",
+                    Temperature.Number == 2 ~ "26",
+                    Temperature.Number == 3 ~ "30",
+                    Temperature.Number == 4 ~ "34",
+                    Temperature.Number == 5 ~ "38",
+                  ))
+
+
+Master %>% 
+            group_by(Temperature) %>%
+            anova_test(dv = meanCs_Activty, between = Treatment) %>%
+            get_anova_table() %>%
+            adjust_pvalue(method = "bonferroni")
+  
+```
+

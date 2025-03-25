@@ -1,0 +1,140 @@
+---
+title: "Hobo Data"
+author: "Indya Lumpkin"
+date: "2024-06-28"
+output: html_document
+---
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#knitr::opts_knit$set(root.dir = 'C:/Users/indya.lumpkin/Documents/GitHub Folder') #Indya's
+
+knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+
+#knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+```
+
+This code chunk below installs al packages at once.
+ONLY RUN IF NOT ALREADY INSTALLED 
+
+```{r}
+#install.packages(c("ggplot2","dplyr","gplots","RColorBrewer","ggpubr","stringr","lubridate","readr","reshape2","tidyr" ))
+```
+
+#### Load libraries
+
+```{r load_libraries, include = TRUE}
+# load libraries - notes show the install command needed to install (pre installed)
+# Plotting
+library(ggplot2)
+library(dplyr)
+library(gplots)
+library(RColorBrewer)
+library(ggpubr)
+library(stringr)
+library(lubridate)
+library(readr)
+library(reshape2)
+library(tidyr)
+```
+
+#Set Path
+```{r}
+path_out <- 'HOBO_Data/output/'
+```
+
+
+#### Hobo Data ####
+```{r}
+DF <- read_csv("Data/HoboData/RunExp.csv", col_names=T)   
+
+as.data.frame(DF)
+
+
+#Change column names
+
+DF <- DF %>%
+  dplyr::rename(Temperature = `Ch:1 - Temperature   (°C)`) %>%
+  dplyr:: rename(Date_Time = `Date-Time (EDT)`)
+#DF_23
+
+DF$Date_Time <- as.character(DF$Date_Time)
+date_time <- strsplit(DF$Date_Time, " ")  # Split at the space
+DF$Date <- sapply(date_time, "[[", 1)  # Extract date
+DF$Time <- sapply(date_time, function(x) {
+  if(length(x) >= 2) {
+    x[[2]]  # Extract the second element if it exists
+  } else {
+    NA  # Assign NA if the vector is too short
+  }
+})
+
+
+print(DF)
+
+## removing unneeded columns with NAs
+DF_trim<- DF %>%
+  dplyr::select( -c("Host Connected", "Started Offset", "Button Down", "Button Up", "End of File")) %>%   mutate(Date_Time = as.POSIXct(substr(Date_Time, 1, 14), format = "%m/%d/%Y %H:%M")) 
+
+# View(DF_trim)
+
+DF_trim <- na.omit(DF_trim)
+
+
+#Filter dates by temperature increase
+
+DF_test <- DF_trim %>% 
+  dplyr::filter( (Date_Time > "2024-06-27 09:01:00")) %>% 
+  dplyr::mutate(MilitaryTime = substr((str_split_fixed(Date_Time, " ", 2)[,2]),1,5))
+
+#### Lets look at the data 
+
+DF_test = DF_test[!duplicated(DF_test$MilitaryTime),] # delete duplicates of Militarytime
+Figure <- ggplot(data=DF_test, aes(x=MilitaryTime, y=Temperature)) + 
+                      geom_point() + 
+                      theme_bw() +
+                      ylab('Temperature') +
+                      xlab('Time') + 
+                      scale_y_continuous(
+                                         breaks = seq( by = 2))
+Figure
+
+pdf('Output/HoboData/HoboFigure.pdf', height = 4, width = 10)
+Figure
+dev.off()
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -1,0 +1,214 @@
+---
+title: "Figures.Rmd"
+author: "Sam Gurr"
+date: "2025-02-26"
+output: html_document
+---
+
+-   Last updates: July 3, 2024
+
+# Thermal Performacne (pilot test) & INFISH projet with Indya Limpkin
+
+## Used citrate synthase kit from Sigma aldrich on C virginica gill tissue homogenate, corrected to
+
+total protein using pierce BCA protein assay (albumin standard)
+
+## Load Libraries
+
+### SET UP
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# SET WORKING DIRECTORY 
+# knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
+#knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+```
+
+
+## Load packages 
+
+```{r setup, include=TRUE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+```
+
+
+## load master data files 
+
+```{r load calcualted data}
+
+# citrate synthase
+CS.df <- read.csv("Output/Colorimetric_Assays/Citrate_Synthase/Calc_Master_CSActivity.csv", sep = ',', head = T) %>% select(!X)
+
+# PEPCK - stil in progress need calculated master file
+PEPCK.df <- read.csv("Output/Colorimetric_assays/PEPCK/Calc_Master_PEPCK.csv", sep = ',', head = T) %>% select(!X)
+
+# Succinate 
+Succinate.df <- read.csv("Output/Colorimetric_Assays/Succinate/Calc_Master_Succinate.csv", sep = ',', head = T) %>% select(!X)
+
+# Lipid peroxidation
+LP.df <- read.csv("Output/Colorimetric_Assays/Lipid_Peroxidation/Calc_Master_Lipid_Peroxidation.csv", sep = ',', head = T) %>% select(!X)
+
+# TAOC - a lot of missing data, did not output the calcualted master file
+
+```
+
+# FIGURES
+
+```{r custom theme} 
+
+# Custom theme for ggplot2
+custom_theme = theme(
+                      axis.text.x = element_text(size = 8, angle = 0, vjust = 0.5, face = "bold"),
+                      axis.text.y = element_text(size = 8),
+                      axis.title.y = element_text(size = 8),
+                      # axis.title.x = element_blank(),
+                      axis.line.y = element_line(size = 0.5),
+                      legend.title = element_blank(),
+                      legend.position="none",
+                      # legend.text = element_text(size = 12),
+                      panel.grid = element_blank(),
+                      panel.background = element_blank(),
+                      plot.title = element_text(hjust = 0.5, size = 12, face="bold")
+                      )
+lab.control = expression(italic("Temperature")[control]) # Italic label
+lab.heated = expression(italic("Temperature")[heated]) # Italic label
+
+lab.xaxislabel <- c("22", "26", "30", "34", "38")
+
+```
+## Build figures and save
+
+```{r citrate synthase}
+
+# citrate synthase
+CS.meanSE <- Rmisc::summarySE(CS.df, measurevar="meanCs_Activity_ug_protein", 
+                             groupvars=c("Timepoint","Treatment"),
+                             na.rm=TRUE, conf.interval=.95)
+
+CSplot <- CS.meanSE %>%   
+  ggplot(aes(x = Timepoint,
+             y = meanCs_Activity_ug_protein,
+             fill=Treatment)) +
+    geom_bar(position = position_dodge(width = 0.6), 
+             stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=meanCs_Activity_ug_protein-se, ymax=meanCs_Activity_ug_protein+se),
+                  size=.3,    # Thinner lines
+                  width=0,
+                  position=position_dodge(.9)) +
+    # scale_x_discrete(labels= lab.xaxislabel) +
+    xlab("Temperature") +
+    scale_fill_manual(values=c("#FFFFFF","#CCCCCC"), labels = c(lab.control, lab.heated)) +
+    ylab("meanCs_Activity_ug_protein") + 
+    ggtitle("Citrate synthase") +
+    custom_theme
+
+
+```
+
+
+```{r succinate}
+
+# succinate
+Succinate.meanSE <- Rmisc::summarySE(
+  (Succinate.df %>% filter(!meanSuccinate_per_ug_protein_5xpre > 400)), 
+  measurevar="meanSuccinate_per_ug_protein_5xpre", 
+                             groupvars=c("Timepoint","Treatment"),
+                             na.rm=TRUE, conf.interval=.95)
+
+Succinateplot <- Succinate.meanSE %>%   
+  ggplot(aes(x = Timepoint,
+             y = meanSuccinate_per_ug_protein_5xpre,
+             fill=Treatment)) +
+    geom_bar(position = position_dodge(width = 0.6), 
+             stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=meanSuccinate_per_ug_protein_5xpre-se, ymax=meanSuccinate_per_ug_protein_5xpre+se),
+                  size=.3,    # Thinner lines
+                  width=0, # no end bars
+                  position=position_dodge(.9)) +
+    xlab("Temperature") +
+    scale_fill_manual(values=c("#FFFFFF","#CCCCCC"), labels = c(lab.control, lab.heated)) +
+    ylab("meanSuccinate_per_ug_protein_5xpre") + 
+    # scale_fill_hue(name="Temperature", # Legend label, use darker colors
+    #                 breaks=c("Ambient", "Heated"),
+    #                 labels=c("Control (22 C)", "Temperature ramp")) +
+    ggtitle("Succinate") +
+    # scale_y_continuous(breaks=0:20*4) +
+    custom_theme
+
+```
+
+```{r lipid peroxidation}
+# Lipid peroxidation
+LP.meanSE <- Rmisc::summarySE(
+  (LP.df %>% filter(!Timepoint %in% 4)), 
+   measurevar="MDA_uM_ug_protein", 
+                             groupvars=c("Timepoint","Treatment"),
+                             na.rm=TRUE, conf.interval=.95)
+LPplot <- LP.meanSE %>%   
+  ggplot(aes(x = Timepoint,
+             y = MDA_uM_ug_protein,
+             fill=Treatment)) +
+    geom_bar(position = position_dodge(width = 0.6), 
+             stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=MDA_uM_ug_protein-se, ymax=MDA_uM_ug_protein+se),
+                  size=.3,    # Thinner lines
+                  width=0,
+                  position=position_dodge(.9)) +
+    # scale_x_discrete(labels= lab.xaxislabel) +
+    xlab("Temperature") +
+    scale_fill_manual(values=c("#FFFFFF","#CCCCCC"), labels = c(lab.control, lab.heated)) +
+    ylab("MDA_uM_ug_protein") + 
+    ggtitle("Lipid peroxidation") +
+    custom_theme
+```
+
+
+
+
+```{r PEPCK}
+# PEPCK 
+PEPCK.meanSE <- Rmisc::summarySE((PEPCK.df %>% filter(!Timepoint %in% 3)),
+                             measurevar="PEPCK_Activity_nmolPyruvante_ngProtein", 
+                             groupvars=c("Timepoint","Treatment"),
+                             na.rm=TRUE, conf.interval=.95)
+
+PEPCKplot <- PEPCK.meanSE %>%   
+  ggplot(aes(x = Timepoint,
+             y = PEPCK_Activity_nmolPyruvante_ngProtein,
+             fill=Treatment)) +
+    geom_bar(position = position_dodge(width = 0.6), 
+             stat="identity",
+             colour="black", # Use black outlines,
+             size=.3) +      # Thinner lines
+    geom_errorbar(aes(ymin=PEPCK_Activity_nmolPyruvante_ngProtein-se, ymax=PEPCK_Activity_nmolPyruvante_ngProtein+se),
+                  size=.3,    # Thinner lines
+                  width=0,
+                  position=position_dodge(.9)) +
+    # scale_x_discrete(labels= lab.xaxislabel) +
+    xlab("Temperature") +
+    scale_fill_manual(values=c("#FFFFFF","#CCCCCC"), labels = c(lab.control, lab.heated)) +
+    ylab("PEPCK_Activity_nmolPyruvante_ngProtein") + 
+    ggtitle("PEPCK") +
+    custom_theme
+```
+
+
+```{r ggarrange all plots}
+
+pdf("Output/Colorimetric_Assays/Barplots_all.pdf", width = 6, height = 5)
+ggpubr::ggarrange(CSplot, Succinateplot,
+                  LPplot, PEPCKplot,
+                  nrow = 2, ncol = 2)
+dev.off()
+
+```
+

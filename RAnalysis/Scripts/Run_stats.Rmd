@@ -1,0 +1,145 @@
+---
+title: "Run_stats.Rmd"
+author: "Sam Gurr"
+date: "2024-07-03"
+output: html_document
+---
+
+-   Last updates: July 3, 2024
+
+# Thermal Performacne (pilot test) & INFISH projet with Indya Limpkin
+
+## Used citrate synthase kit from Sigma aldrich on C virginica gill tissue homogenate, corrected to
+
+total protein using pierce BCA protein assay (albumin standard)
+
+## Load Libraries
+
+### SET UP
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# SET WORKING DIRECTORY 
+# knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
+knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+#knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+```
+
+
+## Load packages 
+
+```{r setup, include=TRUE}
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(rstatix)
+library(lmtest) # to receive p value from betareg model
+# library(FSA) # for the Dun test post hoc for SRH non-parametric 2 way anova]
+library(emmeans)
+```
+
+
+## load master data files 
+
+```{r load calcualted data}
+
+# citrate synthase
+CS.df <- read.csv("Output/Colorimetric_Assays/Citrate_Synthase/Calc_Master_CSActivity.csv", sep = ',', head = T) %>% select(!X)
+
+# PEPCK - stil in progress need calculated master file
+PEPCK.df <- read.csv("Output/Colorimetric_assays/PEPCK/Calc_Master_PEPCK.csv", sep = ',', head = T) %>% select(!X)
+
+# Succinate 
+Succinate.df <- read.csv("Output/Colorimetric_Assays/Succinate/Calc_Master_Succinate.csv", sep = ',', head = T) %>% select(!X)
+
+# Lipid peroxidation
+LP.df <- read.csv("Output/Colorimetric_Assays/Lipid_Peroxidation/Calc_Master_Lipid_Peroxidation.csv", sep = ',', head = T) %>% select(!X)
+
+# TAOC - a lot of missing data, did not output the calcualted master file
+
+```
+
+# STATISTICS
+
+
+```{r run stats}
+library(rstatix)
+
+# citrate synthase
+CS.stats <-
+CS.df %>%   
+  group_by(Timepoint) %>%
+  anova_test(dv = meanCs_Activity_ug_protein, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+write.csv(CS.stats, file = "Output/Colorimetric_assays/Citrate_Synthase/ANOVA_CS.csv") # write csv
+
+
+# Succinate 
+Succinate.stats <-
+Succinate.df %>%   
+  group_by(Timepoint) %>%
+  anova_test(dv = meanSuccinate_per_ug_protein_5xpre, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+Succinate.df %>%   
+  group_by(Timepoint) %>%
+  anova_test(dv = meanSuccinate_per_ug_protein_10xpre, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+Succinate.df %>%   
+  group_by(Timepoint) %>%
+  anova_test(dv = meanSuccinate_per_ug_protein_10xpost, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+Succinate.df %>%   
+  group_by(Timepoint) %>%
+  anova_test(dv = meanSuccinate_per_ug_protein_10xpost30, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+write.csv(Succinate.stats, file = "Output/Colorimetric_assays/Succinate/ANOVA_Succinate.csv") # write csv
+
+
+# Lipid peroxidation
+
+LP.df %>%   
+  group_by(Timepoint, Treatment) %>% 
+  summarise(n = n()) # timepoint 4 does not have Ambient, wont run below
+  
+
+LP.stats <-
+LP.df %>%   
+  filter(!Timepoint %in% 4) %>% # as shown abovem we need to omit for this to run
+  group_by(Timepoint) %>%
+  anova_test(dv = MDA_uM_ug_protein, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+write.csv(LP.stats, file = "Output/Colorimetric_assays/Lipid_Peroxidation/ANOVA_Lipid_Peroxidation.csv") # write csv
+
+# PEPCK 
+
+PEPCK.df %>%   
+  group_by(Timepoint, Treatment) %>% 
+  summarise(n = n()) # timepoint 3 does not have Ambient, wont run below
+  
+
+PEPCK.stats <-
+  PEPCK.df %>%   
+  filter(!(Timepoint %in% 3 | PEPCK_Activity_nmolPyruvante_ngProtein > 1.7)) %>% # as shown abovem we need to omit for this to run
+  # filter(!Volume %in% 10 ) %>% 
+  filter(PEPCK_Activity_nmolPyruvante_ngProtein > 0) %>% 
+  group_by(Timepoint) %>%
+  anova_test(dv = PEPCK_Activity_nmolPyruvante_ngProtein, between = Treatment) %>%
+  get_anova_table() %>%
+  adjust_pvalue(method = "bonferroni")
+
+write.csv(PEPCK.stats, file = "Output/Colorimetric_assays/PEPCK/ANOVA_PEPCK.csv") # write csv
+
+```
+
