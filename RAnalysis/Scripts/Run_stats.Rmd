@@ -21,8 +21,8 @@ total protein using pierce BCA protein assay (albumin standard)
 knitr::opts_chunk$set(echo = TRUE)
 # SET WORKING DIRECTORY 
 # knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
-knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
-#knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+#knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
+knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
 ```
 
 
@@ -61,11 +61,22 @@ LP.df <- read.csv("Output/Colorimetric_Assays/Lipid_Peroxidation/Calc_Master_Lip
 
 # STATISTICS
 
+* Two approached as the following: 
+
+  - (1) Are there differences between temperature X and the control at each condition during the ramp?
+  To test this we run anovas at each timepoint pinning the challenge vs. the control  using 'rstatix; and Bonferroni correction
+  
+  - (2) Are there differences between temperatures within the challenge and timepoint within the control?
+  This tests the challenge and control separately to determine whether we recorded a response to temperature (in the challange) or 
+  another factor (handling, circadian rhythm, etc.) elicited differences over time in the control (static temperature) 
+
 
 ```{r run stats}
 library(rstatix)
 
-# citrate synthase
+# citrate synthase :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+# (1) Each timepoint temperature challenge vs control
 CS.stats <-
 CS.df %>%   
   group_by(Timepoint) %>%
@@ -73,10 +84,27 @@ CS.df %>%
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni")
 
-write.csv(CS.stats, file = "Output/Colorimetric_assays/Citrate_Synthase/ANOVA_CS.csv") # write csv
+# (2) within treatment, effect of temperature / time
+CS.stats_heated <-
+CS.df %>% 
+  filter(Treatment %in% 'Heated') %>% 
+  anova_test(dv = meanCs_Activity_ug_protein, between = Temperature) %>% 
+  get_anova_table()
+
+CS.stats_ambient <-
+CS.df %>% 
+  filter(Treatment %in% 'Ambient') %>% 
+  anova_test(dv = meanCs_Activity_ug_protein, between = Timepoint) %>% 
+  get_anova_table()
 
 
-# Succinate 
+write.csv(CS.stats, file = "Output/Colorimetric_assays/Citrate_Synthase/ANOVA_each_timepoint_CS.csv") # write csv
+write.csv(CS.stats_heated, file = "Output/Colorimetric_assays/Citrate_Synthase/ANOVA_heated_CS.csv") # write csv
+write.csv(CS.stats_ambient, file = "Output/Colorimetric_assays/Citrate_Synthase/ANOVA_ambient_CS.csv") # write csv
+
+# Succinate  :::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+
+# (1) Each timepointtemperature challange vs control
 Succinate.stats <-
 Succinate.df %>%   
   group_by(Timepoint) %>%
@@ -102,11 +130,39 @@ Succinate.df %>%
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni")
 
+# (2) within treatment, effect of temperature / time
+Succinate.stats_heated <-
+Succinate.df %>% 
+  filter(Treatment %in% 'Heated') %>% 
+  mutate(Temperature = as.factor(Temperature)) %>% 
+  anova_test(dv = meanSuccinate_per_ug_protein_5xpre, between = Temperature) %>% 
+  get_anova_table()
+
+Succinate.stats_ambient <-
+Succinate.df %>% 
+  filter(Treatment %in% 'Ambient') %>% 
+  mutate(Timepoint = as.factor(Timepoint)) %>% 
+  anova_test(dv = meanSuccinate_per_ug_protein_5xpre, between = Timepoint) %>% 
+  get_anova_table()
+
+
+mod <- aov(meanSuccinate_per_ug_protein_5xpre ~ Treatment*Temperature, 
+           data = 
+             (Succinate.df %>% 
+                select(meanSuccinate_per_ug_protein_5xpre,Treatment,Temperature) %>% 
+                na.omit())
+              )
+summary(mod)
+
+
 write.csv(Succinate.stats, file = "Output/Colorimetric_assays/Succinate/ANOVA_Succinate.csv") # write csv
+write.csv(Succinate.stats_heated, file = "Output/Colorimetric_assays/Succinate/ANOVA_heated_CS.csv") # write csv
+write.csv(Succinate.stats_ambient, file = "Output/Colorimetric_assays/Succinate/ANOVA_ambient_CS.csv") # write csv
 
 
 # Lipid peroxidation
 
+# (1) Each timepointtemperature challange vs control
 LP.df %>%   
   group_by(Timepoint, Treatment) %>% 
   summarise(n = n()) # timepoint 4 does not have Ambient, wont run below
@@ -120,10 +176,29 @@ LP.df %>%
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni")
 
+# (2) within treatment, effect of temperature / time
+LP.stats_heated <-
+LP.df %>% 
+  filter(Treatment %in% 'Heated') %>% 
+  mutate(Temperature = as.factor(Temperature)) %>% 
+  anova_test(dv = MDA_uM_ug_protein, between = Temperature) %>% 
+  get_anova_table()
+
+LP.stats_ambient <-
+LP.df %>% 
+  filter(Treatment %in% 'Ambient') %>% 
+  mutate(Timepoint = as.factor(Timepoint)) %>% 
+  anova_test(dv = MDA_uM_ug_protein, between = Timepoint) %>% 
+  get_anova_table()
+
+
 write.csv(LP.stats, file = "Output/Colorimetric_assays/Lipid_Peroxidation/ANOVA_Lipid_Peroxidation.csv") # write csv
+write.csv(LP.stats_heated, file = "Output/Colorimetric_assays/Lipid_Peroxidation/ANOVA_heated_CS.csv") # write csv
+write.csv(LP.stats_ambient, file = "Output/Colorimetric_assays/Lipid_Peroxidation/ANOVA_ambient_CS.csv") # write csv
 
 # PEPCK 
 
+# (1) Each timepointtemperature challange vs control
 PEPCK.df %>%   
   group_by(Timepoint, Treatment) %>% 
   summarise(n = n()) # timepoint 3 does not have Ambient, wont run below
@@ -131,7 +206,7 @@ PEPCK.df %>%
 
 PEPCK.stats <-
   PEPCK.df %>%   
-  filter(!(Timepoint %in% 3 | PEPCK_Activity_nmolPyruvante_ngProtein > 1.7)) %>% # as shown abovem we need to omit for this to run
+  filter(!(Timepoint %in% 3 | PEPCK_Activity_nmolPyruvante_ngProtein > 1.7)) %>% # as shown above we need to omit for this to run
   # filter(!Volume %in% 10 ) %>% 
   filter(PEPCK_Activity_nmolPyruvante_ngProtein > 0) %>% 
   group_by(Timepoint) %>%
@@ -139,7 +214,29 @@ PEPCK.stats <-
   get_anova_table() %>%
   adjust_pvalue(method = "bonferroni")
 
+
+# (2) within treatment, effect of temperature / time
+PEPCK.stats_heated <-
+PEPCK.df %>% 
+  filter(!(Timepoint %in% 3 | PEPCK_Activity_nmolPyruvante_ngProtein > 1.7)) %>% # as shown above we need to omit for this to run
+  filter(Treatment %in% 'Heated') %>% 
+  mutate(Temperature = as.factor(Temperature)) %>% 
+  anova_test(dv = PEPCK_Activity_nmolPyruvante_ngProtein, between = Temperature) %>% 
+  get_anova_table()
+
+PEPCK.stats_ambient <-
+PEPCK.df %>% 
+  filter(!(Timepoint %in% 3 | PEPCK_Activity_nmolPyruvante_ngProtein > 1.7)) %>% # as shown above we need to omit for this to run
+  filter(Treatment %in% 'Ambient') %>% 
+  mutate(Timepoint = as.factor(Timepoint)) %>% 
+  anova_test(dv = PEPCK_Activity_nmolPyruvante_ngProtein, between = Timepoint) %>% 
+  get_anova_table()
+
+
+
 write.csv(PEPCK.stats, file = "Output/Colorimetric_assays/PEPCK/ANOVA_PEPCK.csv") # write csv
+write.csv(PEPCK.stats_heated, file = "Output/Colorimetric_assays/PEPCK/ANOVA_heated_CS.csv") # write csv
+write.csv(PEPCK.stats_ambient, file = "Output/Colorimetric_assays/PEPCK/ANOVA_ambient_CS.csv") # write csv
 
 ```
 

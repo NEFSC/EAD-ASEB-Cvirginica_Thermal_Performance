@@ -22,7 +22,7 @@ knitr::opts_chunk$set(echo = TRUE)
 # SET WORKING DIRECTORY 
 # knitr::opts_knit$set(root.dir = "C:/Users/katherine.mcfarland/Documents/GitHub/EAD-ASEB-Cvirginica_Thermal_Performance/larvae") # Katie's
 #knitr::opts_knit$set(root.dir = "C:/Users/samjg/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's
-knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/EAD-ASEB-Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
+knitr::opts_knit$set(root.dir = "C:/Users/samuel.gurr/Documents/Github_repositories/Cvirginica_Thermal_Performance/RAnalysis") # Sam's work
 ```
 
 
@@ -86,10 +86,17 @@ lab.xaxislabel <- c("22", "26", "30", "34", "38")
 # citrate synthase
 CS.meanSE <- Rmisc::summarySE(CS.df, measurevar="meanCs_Activity_ug_protein", 
                              groupvars=c("Timepoint","Treatment"),
-                             na.rm=TRUE, conf.interval=.95)
+                             na.rm=TRUE, conf.interval=.95) %>% 
+              dplyr::mutate(Temperature = case_when(
+                Timepoint == 1 ~ 22, 
+                Timepoint == 2 ~ 26, 
+                Timepoint == 3 ~ 30, 
+                Timepoint == 4 ~ 34, 
+                Timepoint == 5 ~ 38 
+              ))
 
 CSplot <- CS.meanSE %>%   
-  ggplot(aes(x = Timepoint,
+  ggplot(aes(x = as.factor(Temperature),
              y = meanCs_Activity_ug_protein,
              fill=Treatment)) +
     geom_bar(position = position_dodge(width = 0.6), 
@@ -118,10 +125,17 @@ Succinate.meanSE <- Rmisc::summarySE(
   (Succinate.df %>% filter(!meanSuccinate_per_ug_protein_5xpre > 400)), 
   measurevar="meanSuccinate_per_ug_protein_5xpre", 
                              groupvars=c("Timepoint","Treatment"),
-                             na.rm=TRUE, conf.interval=.95)
+                             na.rm=TRUE, conf.interval=.95)%>% 
+              dplyr::mutate(Temperature = case_when(
+                Timepoint == 1 ~ 22, 
+                Timepoint == 2 ~ 26, 
+                Timepoint == 3 ~ 30, 
+                Timepoint == 4 ~ 34, 
+                Timepoint == 5 ~ 38 
+              ))
 
 Succinateplot <- Succinate.meanSE %>%   
-  ggplot(aes(x = Timepoint,
+  ggplot(aes(x = as.factor(Temperature),
              y = meanSuccinate_per_ug_protein_5xpre,
              fill=Treatment)) +
     geom_bar(position = position_dodge(width = 0.6), 
@@ -150,9 +164,18 @@ LP.meanSE <- Rmisc::summarySE(
   (LP.df %>% filter(!Timepoint %in% 4)), 
    measurevar="MDA_uM_ug_protein", 
                              groupvars=c("Timepoint","Treatment"),
-                             na.rm=TRUE, conf.interval=.95)
+                             na.rm=TRUE, conf.interval=.95)%>% 
+              dplyr::mutate(Temperature = case_when(
+                Timepoint == 1 ~ 22, 
+                Timepoint == 2 ~ 26, 
+                Timepoint == 3 ~ 30, 
+                Timepoint == 4 ~ 34, 
+                Timepoint == 5 ~ 38 
+              ))
+
+
 LPplot <- LP.meanSE %>%   
-  ggplot(aes(x = Timepoint,
+  ggplot(aes(x = as.factor(Temperature),
              y = MDA_uM_ug_protein,
              fill=Treatment)) +
     geom_bar(position = position_dodge(width = 0.6), 
@@ -179,10 +202,17 @@ LPplot <- LP.meanSE %>%
 PEPCK.meanSE <- Rmisc::summarySE((PEPCK.df %>% filter(!Timepoint %in% 3)),
                              measurevar="PEPCK_Activity_nmolPyruvante_ngProtein", 
                              groupvars=c("Timepoint","Treatment"),
-                             na.rm=TRUE, conf.interval=.95)
+                             na.rm=TRUE, conf.interval=.95)%>% 
+              dplyr::mutate(Temperature = case_when(
+                Timepoint == 1 ~ 22, 
+                Timepoint == 2 ~ 26, 
+                Timepoint == 3 ~ 30, 
+                Timepoint == 4 ~ 34, 
+                Timepoint == 5 ~ 38 
+              ))
 
 PEPCKplot <- PEPCK.meanSE %>%   
-  ggplot(aes(x = Timepoint,
+  ggplot(aes(x = as.factor(Temperature),
              y = PEPCK_Activity_nmolPyruvante_ngProtein,
              fill=Treatment)) +
     geom_bar(position = position_dodge(width = 0.6), 
