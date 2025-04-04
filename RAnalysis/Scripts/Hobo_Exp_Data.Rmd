@@ -92,13 +92,25 @@ DF_test <- DF_trim %>%
 #### Lets look at the data 
 
 DF_test = DF_test[!duplicated(DF_test$MilitaryTime),] # delete duplicates of Militarytime
-Figure <- ggplot(data=DF_test, aes(x=MilitaryTime, y=Temperature)) + 
+DF_test$Time <- as.POSIXct(DF_test$Time, format = "%H:%M")
+
+
+# get the ellapsed time in minutes
+# Reference time (e.g., the first value in the column)
+reference_time <- DF_test$Time[1]
+
+# Calculate elapsed minutes
+DF_test$elapsed_minutes <- as.numeric(difftime(DF_test$Time, reference_time, units = "mins"))
+
+
+Figure <- ggplot(data=DF_test, aes(x=elapsed_minutes, y=Temperature)) + 
                       geom_point() + 
+                      geom_line() + 
                       theme_bw() +
                       ylab('Temperature') +
                       xlab('Time') + 
                       scale_y_continuous(
-                                         breaks = seq( by = 2))
+                                         breaks = seq(22,38,4))
 Figure
 
 pdf('Output/HoboData/HoboFigure.pdf', height = 4, width = 10)
